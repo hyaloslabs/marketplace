@@ -32,7 +32,7 @@ The identity Hyalos pins is this file at `main` in this repository. Renaming `re
 The repository is private, so its release assets need a GitHub login to download, and Hyalos fetches without one. Download a release into a directory and install from there:
 
 ```
-gh release download --repo hyaloslabs/marketplace --dir marketplace
+gh release download --repo hyaloslabs/marketplace --pattern '*' --dir marketplace
 hyalos plugin install --index ./marketplace hello
 ```
 
