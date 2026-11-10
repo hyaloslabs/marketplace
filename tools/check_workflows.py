@@ -9,7 +9,9 @@ can ask for a signing token:
   manual run with inputs;
 - by default its jobs read contents only, and only its `sign` job can ask for an id-token;
 - no other workflow can ask for an id-token or runs on pull_request_target;
-- every action is pinned to a full commit.
+- every action is pinned to a full commit;
+- only settings.yml's check job names SETTINGS_READ_TOKEN or its environment, and settings.yml runs
+  only on its schedule or by hand (ADR-0095).
 
     check_workflows.py [<workflows-dir>]
 """
@@ -56,6 +58,20 @@ def problems(directory):
                 uses = step.get("uses")
                 if uses and not PINNED.match(uses):
                     out.append(f"{file}: job {name} uses {uses}, not pinned to a commit")
+        # The settings token reaches one job, which runs only on its schedule or by hand (ADR-0095).
+        for name, job in jobs.items():
+            if file == "settings.yml" and name == "check":
+                continue
+            text = yaml.safe_dump(job)
+            if "SETTINGS_READ_TOKEN" in text or "settings-check" in text:
+                out.append(f"{file}: job {name} names the settings token or its environment")
+        if "SETTINGS_READ_TOKEN" in yaml.safe_dump({k: v for k, v in flow.items() if k != "jobs"}):
+            out.append(f"{file}: names the settings token outside a job")
+        if file == "settings.yml":
+            if not isinstance(triggers, dict) or set(triggers) - {"schedule", "workflow_dispatch"}:
+                out.append(f"settings.yml: triggers are {triggers!r}, not only its schedule and by hand")
+            if triggers.get("workflow_dispatch") if isinstance(triggers, dict) else None:
+                out.append("settings.yml: a manual run takes no inputs")
         if file == "release.yml":
             if triggers != {"push": {"branches": ["main"]}}:
                 out.append(f"release.yml: triggers are {triggers!r}, not only a push to main")
