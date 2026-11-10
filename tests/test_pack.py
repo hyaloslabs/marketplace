@@ -1,0 +1,116 @@
+"""The packer, the build and the workflow check.
+
+REFERENCE_DIGEST is pinned in Hyalos too (core/plugin/tests/reference_skill.rs, with the same
+reference skill), so the two archive writers cannot drift apart: a change to either fails one side.
+"""
+
+import hashlib
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+
+import build  # noqa: E402
+import check_workflows  # noqa: E402
+import pack  # noqa: E402
+
+REFERENCE = os.path.join(ROOT, "tests", "reference", "hyalos-reference")
+REFERENCE_DIGEST = "0d085c2a398d33d47f0d1e7143cd460e5bad558cf5b77a9137147a8e6f66f429"
+
+
+class Pack(unittest.TestCase):
+    def test_the_reference_skill_has_the_digest_hyalos_pins(self):
+        name, data = pack.pack(REFERENCE)
+        self.assertEqual(name, "hyalos-reference")
+        self.assertEqual(hashlib.sha256(data).hexdigest(), REFERENCE_DIGEST)
+
+    def test_what_hyalos_refuses_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "s")
+            shutil.copytree(REFERENCE, skill)
+            os.symlink("/etc/passwd", os.path.join(skill, "passwd"))
+            with self.assertRaises(pack.Refused):
+                pack.pack(skill)
+            os.remove(os.path.join(skill, "passwd"))
+            open(os.path.join(skill, ".hidden"), "w").close()
+            with self.assertRaises(pack.Refused):
+                pack.pack(skill)
+            os.remove(os.path.join(skill, ".hidden"))
+            with open(os.path.join(skill, "SKILL.md"), "w") as f:
+                f.write("---\nname: Not_Plain\n---\n")
+            with self.assertRaises(pack.Refused):
+                pack.pack(skill)
+
+    def test_the_executable_bit_is_part_of_the_digest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "s")
+            shutil.copytree(REFERENCE, skill)
+            os.chmod(os.path.join(skill, "scripts", "check.sh"), 0o644)
+            _, data = pack.pack(skill)
+            self.assertNotEqual(hashlib.sha256(data).hexdigest(), REFERENCE_DIGEST)
+
+
+class Build(unittest.TestCase):
+    def test_two_builds_write_the_same_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = os.path.join(tmp, "a"), os.path.join(tmp, "b")
+            for out in (a, b):
+                os.makedirs(out)
+                build.build(ROOT, out)
+            self.assertEqual(sorted(os.listdir(a)), sorted(os.listdir(b)))
+            for file in os.listdir(a):
+                with open(os.path.join(a, file), "rb") as x, open(os.path.join(b, file), "rb") as y:
+                    self.assertEqual(x.read(), y.read(), file)
+
+
+class Workflows(unittest.TestCase):
+    def test_this_repositorys_workflows_pass(self):
+        self.assertEqual(check_workflows.problems(os.path.join(ROOT, ".github", "workflows")), [])
+
+    def check(self, release):
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "release.yml"), "w") as f:
+                f.write(release)
+            return check_workflows.problems(tmp)
+
+    def test_another_trigger_or_token_is_refused(self):
+        good = (
+            "on:\n  push:\n    branches: [main]\npermissions:\n  contents: read\n"
+            "jobs:\n  sign:\n    permissions:\n      id-token: write\n    steps: []\n"
+        )
+        self.assertEqual(self.check(good), [])
+        for bad in (
+            good.replace("  push:\n    branches: [main]\n", "  workflow_call:\n"),
+            good.replace("branches: [main]", "branches: [main, dev]"),
+            good + "  build:\n    permissions:\n      id-token: write\n    steps: []\n",
+            good.replace("  contents: read\n", "  contents: read\n  id-token: write\n"),
+            good.replace("steps: []", "steps:\n      - uses: actions/checkout@v7"),
+        ):
+            self.assertNotEqual(self.check(bad), [], bad)
+
+
+class Versions(unittest.TestCase):
+    def test_a_changed_skill_needs_a_new_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base, head = os.path.join(tmp, "base"), os.path.join(tmp, "head")
+            with open(base, "w") as f:
+                f.write("aa  hello-0.1.0.skill\n")
+            with open(head, "w") as f:
+                f.write("bb  hello-0.1.0.skill\n")
+            run = lambda *a: subprocess.run(  # noqa: E731
+                [sys.executable, os.path.join(ROOT, "tools", "versions.py"), *a],
+                capture_output=True,
+            ).returncode
+            self.assertEqual(run(base, head), 1)
+            with open(head, "w") as f:
+                f.write("bb  hello-0.2.0.skill\n")
+            self.assertEqual(run(base, head), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

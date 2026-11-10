@@ -1,0 +1,166 @@
+name: release
+
+# The marketplace's release pipeline (ADR-0007, ADR-0094 in hyaloslabs/hyalos).
+#
+# Hyalos trusts a skill release only if this workflow, run for this repository's main branch, signed
+# it. That identity is pinned in Hyalos (core/plugin/src/sigstore.rs, PIPELINE):
+#   subject     https://github.com/hyaloslabs/marketplace/.github/workflows/release.yml@refs/heads/main
+#   issuer      https://token.actions.githubusercontent.com
+#   repository  https://github.com/hyaloslabs/marketplace
+#   ref         refs/heads/main
+# Renaming this file, moving the repository or releasing from another branch changes the identity,
+# and every install refuses the release until a Hyalos release pins the new one.
+#
+# Signing is keyless: there is no key to keep. The job asks GitHub for a short-lived OIDC token,
+# Fulcio issues a certificate for this workflow run, and the signature is logged in Rekor. So what
+# decides what gets signed is what reaches main, through main's branch rules.
+# tools/check_workflows.py (ci.yml) fails if this file gains another trigger or if any job but `sign`
+# can request a token.
+#
+# 1. build: every skill is built on two runner images, independently (S7.1).
+# 2. compare: the two builds must be the same bytes, or nothing is signed.
+# 3. sign: each archive is signed keylessly, and its bundle verified for the pinned identity (S7.2).
+# 4. publish: index.json beside the archives and bundles, as a GitHub release (ADR-0090).
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: build (${{ matrix.runner }})
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-22.04]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build every skill
+        run: |
+          python3 --version
+          python3 tools/build.py dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-${{ matrix.runner }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  compare:
+    name: the two builds agree
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build-ubuntu-24.04
+          path: a
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build-ubuntu-22.04
+          path: b
+      - name: Same files, same bytes
+        run: |
+          cat a/DIGESTS
+          diff -r a b || { echo "the two builds differ: nothing is signed"; exit 1; }
+          (cd a && sha256sum -c DIGESTS)
+
+  sign:
+    name: sign keylessly
+    needs: compare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The only job that can ask for a signing token.
+    permissions:
+      id-token: write
+    env:
+      IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/heads/main
+      ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build-ubuntu-24.04
+          path: dist
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
+      - name: Sign each archive
+        run: |
+          cd dist
+          for archive in *.skill; do
+            cosign sign-blob --yes --bundle "$archive.sigstore.json" "$archive"
+          done
+      - name: Each bundle verifies for the pinned identity, and for no other
+        run: |
+          cd dist
+          for archive in *.skill; do
+            cosign verify-blob --bundle "$archive.sigstore.json" \
+              --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" \
+              --certificate-github-workflow-repository "${{ github.repository }}" \
+              --certificate-github-workflow-ref refs/heads/main "$archive"
+            if cosign verify-blob --bundle "$archive.sigstore.json" \
+                --certificate-identity "${IDENTITY/release.yml/ci.yml}" \
+                --certificate-oidc-issuer "$ISSUER" "$archive" 2>/dev/null; then
+              echo "$archive verified for another workflow's identity"; exit 1
+            fi
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: publish the index
+    needs: sign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed
+          path: dist
+      - name: Write the index against the release before it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir previous
+          if gh release download --repo "$GITHUB_REPOSITORY" --pattern index.json --dir previous 2>err; then
+            python3 tools/index.py dist --previous previous/index.json
+          elif grep -qi 'release not found' err; then
+            python3 tools/index.py dist
+          else
+            cat err; exit 1
+          fi
+          if [ -f previous/index.json ] && cmp -s <(jq -S . previous/index.json) <(jq -S . dist/index.json); then
+            echo "nothing changed since the last release"; echo "SKIP=1" >> "$GITHUB_ENV"
+          fi
+      - name: Publish
+        if: env.SKIP != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="r${GITHUB_RUN_NUMBER}"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+            --title "$tag" --notes "Skills built and signed from ${GITHUB_SHA}." \
+            dist/index.json dist/*.skill dist/*.skill.sigstore.json

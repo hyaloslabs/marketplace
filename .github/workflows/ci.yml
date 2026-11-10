@@ -1,0 +1,47 @@
+name: ci
+
+# Checks every pull request and every push to main. It holds no token beyond reading the repository
+# and signs nothing; release.yml does that (ADR-0094 in hyaloslabs/hyalos).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: tests, workflows and versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: PyYAML for the workflow check
+        run: python3 -c 'import yaml' 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq python3-yaml; }
+      - name: Tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Only the release pipeline signs, and only as intended
+        run: python3 tools/check_workflows.py
+      - name: Every skill builds
+        run: python3 tools/build.py "$RUNNER_TEMP/head"
+      - name: A changed skill has a new version
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # The same archive name (name and version) with other bytes is a change without a version.
+          git worktree add -q "$RUNNER_TEMP/base-tree" "$BASE"
+          if [ -f "$RUNNER_TEMP/base-tree/tools/build.py" ]; then
+            (cd "$RUNNER_TEMP/base-tree" && python3 tools/build.py "$RUNNER_TEMP/base")
+            python3 tools/versions.py "$RUNNER_TEMP/base/DIGESTS" "$RUNNER_TEMP/head/DIGESTS"
+          else
+            echo "the base has no skills yet"
+          fi
