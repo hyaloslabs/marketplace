@@ -19,7 +19,8 @@ name: release
 #
 # 1. build: every skill is built on two runner images, independently (S7.1).
 # 2. compare: the two builds must be the same bytes, or nothing is signed.
-# 3. sign: each archive is signed keylessly, and its bundle verified for the pinned identity (S7.2).
+# 3. settings: the daily settings check last passed, within 8 days, with no drift open (ADR-0095).
+#    sign: each archive is signed keylessly, and its bundle verified for the pinned identity (S7.2).
 # 4. publish: index.json beside the archives and bundles, as a GitHub release (ADR-0090).
 on:
   push:
@@ -79,9 +80,34 @@ jobs:
           diff -r a b || { echo "the two builds differ: nothing is signed"; exit 1; }
           (cd a && sha256sum -c DIGESTS)
 
+  settings:
+    name: the protection settings were checked
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # Nothing is signed unless the daily settings check (settings.yml) last finished as a pass, within
+    # 8 days, and no drift issue is open (ADR-0095). A check that stopped running blocks here.
+    permissions:
+      actions: read
+      issues: read
+    steps:
+      - name: The last settings check passed, recently, and nothing has drifted
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          last=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow settings.yml --branch main \
+            --status completed --limit 1 --json conclusion,createdAt --jq '.[0] // empty')
+          [ -n "$last" ] || { echo "the settings check has never run: run settings.yml once"; exit 1; }
+          conclusion=$(jq -r .conclusion <<<"$last"); at=$(jq -r .createdAt <<<"$last")
+          [ "$conclusion" = success ] || { echo "the last settings check, at $at, was $conclusion"; exit 1; }
+          age=$(( ($(date -u +%s) - $(date -u -d "$at" +%s)) / 86400 ))
+          [ "$age" -le 8 ] || { echo "the last settings check was $age days ago, at $at"; exit 1; }
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --label settings-drift --state open --json number --jq 'length')
+          [ "$open" = 0 ] || { echo "a settings-drift issue is open"; exit 1; }
+          echo "checked at $at, $age day(s) ago"
+
   sign:
     name: sign keylessly
-    needs: compare
+    needs: [compare, settings]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # The only job that can ask for a signing token.

@@ -1,0 +1,93 @@
+name: settings
+
+# Daily: the repository's protection settings against settings/expected.json (ADR-0095 in
+# hyaloslabs/hyalos). There is no signing key, so what reaches main is what release.yml signs; the
+# ruleset, the Actions settings and who holds admin are what keep that honest, and they live in GitHub,
+# not here. This only reads them.
+#
+# On drift it opens one issue labelled settings-drift, or comments on the open one, and closes it when
+# the settings match again. release.yml refuses to sign while that issue is open, or when this check
+# has not passed in the last 8 days, so a schedule that stopped is noticed at the next release.
+#
+# Its token comes from a GitHub App of its own that is installed on this repository alone and can
+# read Administration and Metadata only. Each run mints a token from it that lasts an hour, asks for
+# just those two permissions, and is revoked when the job ends. The app's client ID
+# (SETTINGS_APP_CLIENT_ID, a variable) and private key (SETTINGS_APP_KEY, a secret) are held in the
+# settings-check environment, which only main may use. Only this job names them
+# (tools/check_workflows.py). The operator creates the app; see README.md.
+#
+# A change to the settings on purpose: update settings/expected.json in the same pull request, from
+# `tools/check_settings.py hyaloslabs/marketplace --print`.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: settings
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: protection settings as expected
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: settings-check
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # A token that cannot be minted leaves the compare step with none, which it reports as a failure,
+      # so the drift issue says why. With no owner or repositories given, the token covers this
+      # repository alone, on every trigger.
+      - name: Mint the read-only token
+        id: app
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SETTINGS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SETTINGS_APP_KEY }}
+          permission-administration: read
+          permission-metadata: read
+      - name: Compare
+        id: compare
+        env:
+          SETTINGS_READ_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set +e
+          python3 tools/check_settings.py "$GITHUB_REPOSITORY" > report.txt 2>&1
+          status=$?
+          set -e
+          cat report.txt
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - name: Open, update or close the drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.compare.outputs.status }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --label settings-drift --state open --json number --jq '.[0].number // empty')
+          if [ "$STATUS" = 0 ]; then
+            if [ -n "$open" ]; then
+              gh issue close "$open" --repo "$GITHUB_REPOSITORY" --comment "The settings match settings/expected.json again ($RUN)."
+            fi
+            exit 0
+          fi
+          { echo "The settings check did not pass ($RUN). Releases are refused until it does."; echo; echo '```'; cat report.txt; echo '```'; } > body.md
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body-file body.md
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --label settings-drift \
+              --title "The repository's protection settings drifted" --body-file body.md
+          fi
+          exit 1

@@ -1,0 +1,103 @@
+{
+  "actions": {
+    "access": {
+      "access_level": "none"
+    },
+    "permissions": {
+      "allowed_actions": "all",
+      "enabled": true,
+      "sha_pinning_required": false
+    },
+    "workflow": {
+      "can_approve_pull_request_reviews": false,
+      "default_workflow_permissions": "read"
+    }
+  },
+  "admins": [
+    "retroboot"
+  ],
+  "environments": [
+    {
+      "branches": [
+        "branch:main"
+      ],
+      "deployment_branch_policy": {
+        "custom_branch_policies": true,
+        "protected_branches": false
+      },
+      "name": "settings-check",
+      "protection_rules": [
+        "branch_policy"
+      ]
+    }
+  ],
+  "repository": {
+    "allow_forking": false,
+    "default_branch": "main",
+    "visibility": "private"
+  },
+  "rulesets": [
+    {
+      "bypass_actors": [
+        {
+          "actor_id": 5,
+          "actor_type": "RepositoryRole",
+          "bypass_mode": "pull_request"
+        }
+      ],
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "~DEFAULT_BRANCH"
+          ]
+        }
+      },
+      "enforcement": "active",
+      "name": "main",
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "parameters": {
+            "allowed_merge_methods": [
+              "squash",
+              "merge",
+              "rebase"
+            ],
+            "dismiss_stale_reviews_on_push": true,
+            "dismissal_restriction": {
+              "allowed_actors": [],
+              "enabled": false
+            },
+            "require_code_owner_review": true,
+            "require_extra_approval_for_unattributed_changes": true,
+            "require_last_push_approval": false,
+            "required_approving_review_count": 1,
+            "required_review_thread_resolution": false,
+            "required_reviewers": []
+          },
+          "type": "pull_request"
+        },
+        {
+          "parameters": {
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "tests, workflows and versions"
+              }
+            ],
+            "strict_required_status_checks_policy": false
+          },
+          "type": "required_status_checks"
+        }
+      ],
+      "source_type": "Repository",
+      "target": "branch"
+    }
+  ]
+}

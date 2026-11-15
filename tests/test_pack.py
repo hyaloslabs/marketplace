@@ -5,6 +5,7 @@ reference skill), so the two archive writers cannot drift apart: a change to eit
 """
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -92,6 +93,61 @@ class Workflows(unittest.TestCase):
             good.replace("steps: []", "steps:\n      - uses: actions/checkout@v7"),
         ):
             self.assertNotEqual(self.check(bad), [], bad)
+
+
+class SettingsToken(unittest.TestCase):
+    def problems(self, files):
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(os.path.join(ROOT, ".github", "workflows", "release.yml"), tmp)
+            for name, text in files.items():
+                with open(os.path.join(tmp, name), "w") as f:
+                    f.write(text)
+            return check_workflows.problems(tmp)
+
+    def test_only_the_settings_check_holds_the_token_and_only_on_schedule(self):
+        with open(os.path.join(ROOT, ".github", "workflows", "settings.yml")) as f:
+            settings = f.read()
+        self.assertEqual(self.problems({"settings.yml": settings}), [])
+        borrowed = (
+            "on: [pull_request]\npermissions:\n  contents: read\njobs:\n  leak:\n"
+            "    environment: settings-check\n    steps:\n      - run: echo ${{ secrets.SETTINGS_READ_TOKEN }}\n"
+        )
+        self.assertNotEqual(self.problems({"settings.yml": settings, "ci.yml": borrowed}), [])
+        for name in ("secrets.SETTINGS_APP_KEY", "vars.SETTINGS_APP_CLIENT_ID"):
+            minted = (
+                "on: [push]\npermissions:\n  contents: read\njobs:\n  leak:\n"
+                f"    steps:\n      - run: echo ${{{{ {name} }}}}\n"
+            )
+            self.assertNotEqual(self.problems({"settings.yml": settings, "ci.yml": minted}), [], name)
+        on_pr = settings.replace("  workflow_dispatch:\n", "  workflow_dispatch:\n  pull_request:\n")
+        self.assertNotEqual(self.problems({"settings.yml": on_pr}), [])
+
+
+class Settings(unittest.TestCase):
+    def test_a_loosened_setting_is_named(self):
+        import check_settings
+
+        with open(check_settings.EXPECTED) as f:
+            expected = json.load(f)
+        self.assertEqual(check_settings.differences(expected, expected), [])
+        loosened = json.loads(json.dumps(expected))
+        loosened["rulesets"][0]["bypass_actors"].append(
+            {"actor_id": 1, "actor_type": "Integration", "bypass_mode": "always"}
+        )
+        loosened["actions"]["workflow"]["default_workflow_permissions"] = "write"
+        loosened["rulesets"][0]["rules"] = [r for r in loosened["rulesets"][0]["rules"] if r["type"] != "pull_request"]
+        found = check_settings.differences(expected, loosened)
+        self.assertTrue(any("bypass_actors" in d for d in found), found)
+        self.assertTrue(any("default_workflow_permissions" in d for d in found), found)
+        self.assertTrue(any(".rules" in d for d in found), found)
+
+    def test_without_a_token_nothing_passes(self):
+        result = subprocess.run(
+            [sys.executable, os.path.join(ROOT, "tools", "check_settings.py"), "hyaloslabs/marketplace"],
+            capture_output=True,
+            env={k: v for k, v in os.environ.items() if k != "SETTINGS_READ_TOKEN"},
+        )
+        self.assertEqual(result.returncode, 1)
 
 
 class Versions(unittest.TestCase):
