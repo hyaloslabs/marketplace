@@ -10,8 +10,8 @@ can ask for a signing token:
 - by default its jobs read contents only, and only its `sign` job can ask for an id-token;
 - no other workflow can ask for an id-token or runs on pull_request_target;
 - every action is pinned to a full commit;
-- only settings.yml's check job names SETTINGS_READ_TOKEN or its environment, and settings.yml runs
-  only on its schedule or by hand (ADR-0095).
+- only settings.yml's check job names the settings app's key, its client ID, the token minted from
+  them or their environment, and settings.yml runs only on its schedule or by hand (ADR-0095).
 
     check_workflows.py [<workflows-dir>]
 """
@@ -21,6 +21,9 @@ import re
 import sys
 
 import yaml
+
+# What only settings.yml's check job may name (ADR-0095).
+SETTINGS_NAMES = ("SETTINGS_APP_KEY", "SETTINGS_APP_CLIENT_ID", "SETTINGS_READ_TOKEN", "settings-check")
 
 PINNED = re.compile(r"[^@\s]+@[0-9a-f]{40}\Z")
 
@@ -63,10 +66,11 @@ def problems(directory):
             if file == "settings.yml" and name == "check":
                 continue
             text = yaml.safe_dump(job)
-            if "SETTINGS_READ_TOKEN" in text or "settings-check" in text:
-                out.append(f"{file}: job {name} names the settings token or its environment")
-        if "SETTINGS_READ_TOKEN" in yaml.safe_dump({k: v for k, v in flow.items() if k != "jobs"}):
-            out.append(f"{file}: names the settings token outside a job")
+            if any(n in text for n in SETTINGS_NAMES):
+                out.append(f"{file}: job {name} names the settings app, its token or its environment")
+        outside = yaml.safe_dump({k: v for k, v in flow.items() if k != "jobs"})
+        if any(n in outside for n in SETTINGS_NAMES):
+            out.append(f"{file}: names the settings app, its token or its environment outside a job")
         if file == "settings.yml":
             if not isinstance(triggers, dict) or set(triggers) - {"schedule", "workflow_dispatch"}:
                 out.append(f"settings.yml: triggers are {triggers!r}, not only its schedule and by hand")

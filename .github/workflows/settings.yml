@@ -9,9 +9,12 @@ name: settings
 # the settings match again. release.yml refuses to sign while that issue is open, or when this check
 # has not passed in the last 8 days, so a schedule that stopped is noticed at the next release.
 #
-# SETTINGS_READ_TOKEN is a fine-grained token for this repository alone, Administration and Metadata
-# read-only, held in the settings-check environment, which only main may use. Only this job names it
-# (tools/check_workflows.py). The operator creates it; see README.md.
+# Its token comes from a GitHub App of its own that is installed on this repository alone and can
+# read Administration and Metadata only. Each run mints a token from it that lasts an hour, asks for
+# just those two permissions, and is revoked when the job ends. The app's client ID
+# (SETTINGS_APP_CLIENT_ID, a variable) and private key (SETTINGS_APP_KEY, a secret) are held in the
+# settings-check environment, which only main may use. Only this job names them
+# (tools/check_workflows.py). The operator creates the app; see README.md.
 #
 # A change to the settings on purpose: update settings/expected.json in the same pull request, from
 # `tools/check_settings.py hyaloslabs/marketplace --print`.
@@ -44,10 +47,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # A token that cannot be minted leaves the compare step with none, which it reports as a failure,
+      # so the drift issue says why.
+      - name: Mint the read-only token
+        id: app
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SETTINGS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SETTINGS_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-administration: read
+          permission-metadata: read
       - name: Compare
         id: compare
         env:
-          SETTINGS_READ_TOKEN: ${{ secrets.SETTINGS_READ_TOKEN }}
+          SETTINGS_READ_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           set +e
           python3 tools/check_settings.py "$GITHUB_REPOSITORY" > report.txt 2>&1

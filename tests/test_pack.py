@@ -113,6 +113,12 @@ class SettingsToken(unittest.TestCase):
             "    environment: settings-check\n    steps:\n      - run: echo ${{ secrets.SETTINGS_READ_TOKEN }}\n"
         )
         self.assertNotEqual(self.problems({"settings.yml": settings, "ci.yml": borrowed}), [])
+        for name in ("secrets.SETTINGS_APP_KEY", "vars.SETTINGS_APP_CLIENT_ID"):
+            minted = (
+                "on: [push]\npermissions:\n  contents: read\njobs:\n  leak:\n"
+                f"    steps:\n      - run: echo ${{{{ {name} }}}}\n"
+            )
+            self.assertNotEqual(self.problems({"settings.yml": settings, "ci.yml": minted}), [], name)
         on_pr = settings.replace("  workflow_dispatch:\n", "  workflow_dispatch:\n  pull_request:\n")
         self.assertNotEqual(self.problems({"settings.yml": on_pr}), [])
 

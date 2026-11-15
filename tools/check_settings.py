@@ -16,8 +16,9 @@ It only reads. A setting it cannot read is an error, never a match.
     check_settings.py <owner/repo>            exit 1 on drift, printing each difference
     check_settings.py <owner/repo> --print    print the live settings as expected.json holds them
 
-The token is SETTINGS_READ_TOKEN: a fine-grained token for this repository alone, with
-Administration and Metadata read-only and nothing else.
+The token is SETTINGS_READ_TOKEN. In settings.yml it is minted from the check's own GitHub App,
+installed on this repository alone, with Administration and Metadata read-only and nothing else. By
+hand, an admin's own token reads the same settings.
 """
 
 import json
