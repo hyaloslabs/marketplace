@@ -141,6 +141,39 @@ class Settings(unittest.TestCase):
         self.assertTrue(any("default_workflow_permissions" in d for d in found), found)
         self.assertTrue(any(".rules" in d for d in found), found)
 
+    def test_a_hidden_bypass_list_is_covered_by_the_change_time(self):
+        import check_settings
+
+        with open(check_settings.EXPECTED) as f:
+            expected = json.load(f)
+        # What a read-only token sees: the same ruleset, its bypass list left out.
+        seen = json.loads(json.dumps(expected))
+        for s in seen["rulesets"]:
+            s.pop("bypass_actors")
+        self.assertEqual(check_settings.differences(check_settings.comparable(expected, seen), seen), [])
+        # Editing the bypass list moves the change time, which the token does see.
+        seen["rulesets"][0]["updated_at"] = "2027-01-01T00:00:00.000+00:00"
+        found = check_settings.differences(check_settings.comparable(expected, seen), seen)
+        self.assertTrue(any(".updated_at" in d for d in found), found)
+        # A visible bypass list is still compared.
+        widened = json.loads(json.dumps(expected))
+        widened["rulesets"][0]["bypass_actors"].append(
+            {"actor_id": 1, "actor_type": "Integration", "bypass_mode": "always"}
+        )
+        found = check_settings.differences(check_settings.comparable(expected, widened), widened)
+        self.assertTrue(any("bypass_actors" in d for d in found), found)
+
+    def test_a_change_time_is_read_in_utc_or_not_at_all(self):
+        import check_settings
+
+        self.assertEqual(
+            check_settings.changed_at("2026-11-09T19:05:33.079-06:00"),
+            check_settings.changed_at("2026-11-10T01:05:33.079Z"),
+        )
+        for bad in (None, "", "yesterday", "2026-11-10T01:05:33"):
+            with self.assertRaises(check_settings.Unreadable, msg=bad):
+                check_settings.changed_at(bad)
+
     def test_without_a_token_nothing_passes(self):
         result = subprocess.run(
             [sys.executable, os.path.join(ROOT, "tools", "check_settings.py"), "hyaloslabs/marketplace"],

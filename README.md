@@ -34,6 +34,8 @@ Those settings live in GitHub, not in this repository: the `main` ruleset, the A
 
 To change a setting on purpose, change it, then update `settings/expected.json` in a pull request with the output of `SETTINGS_READ_TOKEN=$(gh auth token) python3 tools/check_settings.py hyaloslabs/marketplace --print`, run as an admin.
 
+GitHub shows a ruleset's bypass list only to a token that can write to rulesets, and the check's token can only read. So `settings/expected.json` also pins each ruleset's last change time: any edit to a ruleset is drift, even one that only saves it unchanged, and the drift issue names the ruleset. Read it with `--print` as above to see what changed, the bypass list included.
+
 The check reads settings only an admin can see, so it gets its token from a GitHub App of its own. Each run mints a token that lasts an hour, can only read Administration and Metadata, and is revoked when the job ends. The operator creates the app once:
 
 1. Create a GitHub App owned by `hyaloslabs` (Organization settings ▸ Developer settings ▸ GitHub Apps ▸ New GitHub App), for example `hyaloslabs-settings-check`. Turn off the webhook. Repository permissions: **Administration: Read-only** and **Metadata: Read-only**, nothing else. Installable only on this account.
