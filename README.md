@@ -32,18 +32,7 @@ The identity Hyalos pins is this file at `main` in this repository. Renaming `re
 
 Those settings live in GitHub, not in this repository: the `main` ruleset, the Actions settings, who holds admin, and the `settings-check` environment. `settings.yml` compares them with `settings/expected.json` every day. On a difference it opens one issue labelled `settings-drift`, and closes it when they match again. `release.yml` signs nothing unless that check last passed within 8 days and no such issue is open, so a check that stopped running blocks the next release rather than going unnoticed.
 
-To change a setting on purpose, change it, then update `settings/expected.json` in a pull request with the output of `SETTINGS_READ_TOKEN=$(gh auth token) python3 tools/check_settings.py hyaloslabs/marketplace --print`, run as an admin.
-
-GitHub shows a ruleset's bypass list only to a token that can write to rulesets, and the check's token can only read. So `settings/expected.json` also pins each ruleset's last change time: any edit to a ruleset is drift, even one that only saves it unchanged, and the drift issue names the ruleset. Read it with `--print` as above to see what changed, the bypass list included.
-
-The check reads settings only an admin can see, so it gets its token from a GitHub App of its own. Each run mints a token that lasts an hour, can only read Actions, Administration, Metadata and the organization's members, and is revoked when the job ends. The operator creates the app once:
-
-1. Create a GitHub App owned by `hyaloslabs` (Organization settings ▸ Developer settings ▸ GitHub Apps ▸ New GitHub App), for example `hyaloslabs-settings-check`. Turn off the webhook. Repository permissions: **Actions: Read-only** (GitHub lists environments under it), **Administration: Read-only** and **Metadata: Read-only**. Organization permissions: **Members: Read-only** (organization owners are admins here, and only it shows them). Nothing else. Installable only on this account.
-2. Install it on `hyaloslabs/marketplace` alone (Only select repositories).
-3. In the `settings-check` environment (Settings ▸ Environments ▸ settings-check), add the app's client ID as the **variable** `SETTINGS_APP_CLIENT_ID`, and generate a private key and store it as the **secret** `SETTINGS_APP_KEY`. Delete the downloaded key file afterwards. Only `main` may use that environment, and only `settings.yml`'s check job names either.
-4. Run the check once: `gh workflow run settings.yml --repo hyaloslabs/marketplace --ref main`.
-
-The key does not expire. To rotate it, generate a new one, replace the secret, and delete the old key in the app's settings.
+The check reads through a GitHub App of its own, read-only on Actions, Administration, Metadata and the organization's members. It also checks that App's own grant, so a wider App, or one installed elsewhere, is drift too. Making the App, storing its key, the first run, rotating the key, and changing a setting on purpose are in the maintainer runbook, [`docs/operations/marketplace.md`](https://github.com/hyaloslabs/hyalos/blob/main/docs/operations/marketplace.md) in the Hyalos repository. The App can be made from `https://hyaloslabs.github.io/hyalos/setup/settings-check/`.
 
 ## Installing from it
 

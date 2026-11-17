@@ -16,6 +16,32 @@
   "admins": [
     "retroboot"
   ],
+  "app": {
+    "events": [],
+    "installations": [
+      {
+        "account": "hyaloslabs",
+        "events": [],
+        "permissions": {
+          "actions": "read",
+          "administration": "read",
+          "members": "read",
+          "metadata": "read"
+        },
+        "repositories": [
+          "hyaloslabs/marketplace"
+        ],
+        "repository_selection": "selected"
+      }
+    ],
+    "owner": "hyaloslabs",
+    "permissions": {
+      "actions": "read",
+      "administration": "read",
+      "members": "read",
+      "metadata": "read"
+    }
+  },
   "environments": [
     {
       "branches": [
