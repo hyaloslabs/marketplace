@@ -12,6 +12,7 @@ Skills for [Hyalos](https://github.com/hyaloslabs/hyalos), built reproducibly an
 | `tools/build.py` | Builds every skill. It reads only the repository, so two builds of one commit agree |
 | `tools/index.py` | Writes `index.json` for a release |
 | `tools/check_workflows.py` | Fails if a workflow could sign other than as the release pipeline, or reach the settings token |
+| `tools/snapshot.py`, `trust/sigstore-tuf-root.json`, `tools/requirements-snapshot.txt` | Fetches Sigstore's trusted root through TUF, from the TUF root pinned here, with a hash-pinned client, and wraps it as the snapshot Hyalos imports |
 | `tools/check_settings.py`, `settings/expected.json` | The repository's protection settings, and what they must be |
 | `tests/reference/` | A fixed skill whose digest Hyalos pins too, so the two archive writers cannot drift |
 
@@ -23,6 +24,8 @@ Every push to `main` runs `release.yml`:
 2. The two builds must be the same bytes, or nothing is signed.
 3. Each archive is signed keylessly with cosign, which logs it in Rekor, and its bundle is checked for the pinned identity and refused for another.
 4. `index.json`, the archives and their bundles are published as release `r<run>`, marked latest. Nothing is published when nothing changed.
+
+It also runs every day on a schedule, which runs `main`'s own file and so signs as the same identity. Each run fetches Sigstore's trusted root through TUF and signs it as `trusted-root.json`, the snapshot Hyalos verifies releases against (ADR-0007, ADR-0097). A release carries it, and a new release is published when the index changed, the trusted root changed, or the last one is 30 days old, so the snapshot in the latest release is never older than that. A run that fails publishes nothing and opens an issue labelled `release-failed`; the last release stays current.
 
 There is no signing key. What decides what is signed is what reaches `main`, so `main` accepts only pull requests a code owner approved, and never a force push or a deletion.
 

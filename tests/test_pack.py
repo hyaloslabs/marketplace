@@ -85,8 +85,16 @@ class Workflows(unittest.TestCase):
             "jobs:\n  sign:\n    permissions:\n      id-token: write\n    steps: []\n"
         )
         self.assertEqual(self.check(good), [])
+        # A schedule runs main's own file, so it signs as the same identity (ADR-0097).
+        scheduled = good.replace(
+            "    branches: [main]\n", "    branches: [main]\n  schedule:\n    - cron: '41 4 * * *'\n"
+        )
+        self.assertEqual(self.check(scheduled), [])
         for bad in (
             good.replace("  push:\n    branches: [main]\n", "  workflow_call:\n"),
+            good.replace("    branches: [main]\n", "    branches: [main]\n  workflow_dispatch:\n"),
+            scheduled.replace("    - cron: '41 4 * * *'\n", "    - cron: '41 4 * * *'\n      branch: dev\n"),
+            scheduled.replace("  schedule:\n    - cron: '41 4 * * *'\n", "  schedule: daily\n"),
             good.replace("branches: [main]", "branches: [main, dev]"),
             good + "  build:\n    permissions:\n      id-token: write\n    steps: []\n",
             good.replace("  contents: read\n", "  contents: read\n  id-token: write\n"),

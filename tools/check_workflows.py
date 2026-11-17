@@ -5,8 +5,8 @@ Hyalos trusts what .github/workflows/release.yml signs when it runs for main (AD
 hyaloslabs/hyalos). There is no key to guard, so this guards how that workflow can run and who in it
 can ask for a signing token:
 
-- release.yml runs only on a push to main: no pull request, no other repository calling it, no
-  manual run with inputs;
+- release.yml runs only on a push to main and on its schedule: no pull request, no other repository
+  calling it, no manual run with inputs;
 - by default its jobs read contents only, and only its `sign` job can ask for an id-token;
 - no other workflow can ask for an id-token or runs on pull_request_target;
 - every action is pinned to a full commit;
@@ -26,6 +26,20 @@ import yaml
 SETTINGS_NAMES = ("SETTINGS_APP_KEY", "SETTINGS_APP_CLIENT_ID", "SETTINGS_READ_TOKEN", "settings-check")
 
 PINNED = re.compile(r"[^@\s]+@[0-9a-f]{40}\Z")
+
+
+def release_triggers_ok(triggers):
+    """A push to main, and optionally a schedule of cron lines and nothing else (ADR-0097). A
+    scheduled run runs the default branch's own file, so it signs as the same identity; anything
+    that lets another ref or caller run the file does not."""
+    if not isinstance(triggers, dict) or set(triggers) - {"push", "schedule"}:
+        return False
+    if triggers.get("push") != {"branches": ["main"]}:
+        return False
+    schedule = triggers.get("schedule", [])
+    return isinstance(schedule, list) and all(
+        isinstance(s, dict) and set(s) == {"cron"} and isinstance(s["cron"], str) for s in schedule
+    )
 
 
 def problems(directory):
@@ -77,8 +91,10 @@ def problems(directory):
             if triggers.get("workflow_dispatch") if isinstance(triggers, dict) else None:
                 out.append("settings.yml: a manual run takes no inputs")
         if file == "release.yml":
-            if triggers != {"push": {"branches": ["main"]}}:
-                out.append(f"release.yml: triggers are {triggers!r}, not only a push to main")
+            if not release_triggers_ok(triggers):
+                out.append(
+                    f"release.yml: triggers are {triggers!r}, not only a push to main and a schedule"
+                )
             if top != {"contents": "read"}:
                 out.append(f"release.yml: default permissions are {top!r}, not contents: read")
             if tokens != ["sign"]:
