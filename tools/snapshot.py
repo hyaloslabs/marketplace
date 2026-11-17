@@ -33,9 +33,10 @@ FILE = "trusted-root.json"
 KIND = "hyalos.trusted_root_snapshot"
 MEDIA_TYPE = "application/vnd.dev.sigstore.trustedroot+json;version=0.1"
 
-# A snapshot unchanged for this long is published again, so its signed time stays well inside the
-# 90 days Hyalos accepts by default.
-REFRESH_DAYS = 30
+# A release unchanged for this long is published again, re-signed, so what it carries stays well
+# inside the ages Hyalos accepts by default: 90 days for the snapshot, and 30 for the revocation list
+# that releases will carry (S7.7).
+REFRESH_DAYS = 7
 
 
 def check(root):
