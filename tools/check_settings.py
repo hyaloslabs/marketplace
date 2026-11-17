@@ -6,12 +6,17 @@ settings that decide what reaches main are the trust anchor's protection (ADR-00
 hyaloslabs/hyalos). They live in GitHub, not in this repository, so nothing else notices one being
 loosened. This reads them and names every one that differs:
 
-- every ruleset on the repository, with its rules, conditions and bypass list;
+- every ruleset on the repository, with its rules and conditions, and the time it was last changed;
 - the Actions settings: which actions may run, the default token permissions, whether a workflow may
   approve a pull request, and which other repositories may use these workflows;
 - who holds admin, the visibility, forking, and the environments.
 
 It only reads. A setting it cannot read is an error, never a match.
+
+GitHub shows a ruleset's bypass list only to a reader that can write to rulesets, which this check's
+read-only token cannot. So each ruleset's last change time is pinned too: any edit to a ruleset,
+its bypass list included, moves it and is drift. When the bypass list is visible (an admin's token,
+as with --print), it is compared as well.
 
     check_settings.py <owner/repo>            exit 1 on drift, printing each difference
     check_settings.py <owner/repo> --print    print the live settings as expected.json holds them
@@ -21,6 +26,7 @@ installed on this repository alone, with Administration and Metadata read-only a
 hand, an admin's own token reads the same settings.
 """
 
+import datetime
 import json
 import os
 import sys
@@ -53,28 +59,52 @@ def get(path, token):
         raise Unreadable(f"{path}: {'HTTP ' + str(status) if status else type(e).__name__}") from None
 
 
+def changed_at(value):
+    """A ruleset's updated_at in UTC. GitHub writes it in the reader's own offset."""
+    try:
+        at = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError):
+        raise Unreadable("a ruleset's last change time") from None
+    if at.tzinfo is None:
+        raise Unreadable("a ruleset's last change time") from None
+    return at.astimezone(datetime.timezone.utc).isoformat(timespec="milliseconds")
+
+
+def ruleset(full):
+    """One ruleset as expected.json holds it. Its bypass list only when the token can see it."""
+    out = {
+        "name": full["name"],
+        "source_type": full.get("source_type"),
+        "target": full["target"],
+        "enforcement": full["enforcement"],
+        "conditions": full.get("conditions"),
+        "rules": sorted(full["rules"], key=lambda rule: rule["type"]),
+        # Every edit moves this, including one to the bypass list a read-only token cannot see.
+        "updated_at": changed_at(full.get("updated_at")),
+    }
+    if "bypass_actors" in full:
+        out["bypass_actors"] = sorted(
+            full["bypass_actors"], key=lambda a: (a["actor_type"], str(a["actor_id"]))
+        )
+    return out
+
+
+def comparable(expected, actual):
+    """expected, less the bypass lists the token could not see. Their rulesets' change times stay."""
+    hidden = {s["name"] for s in actual.get("rulesets", []) if "bypass_actors" not in s}
+    out = json.loads(json.dumps(expected))
+    for s in out.get("rulesets", []):
+        if s.get("name") in hidden:
+            s.pop("bypass_actors", None)
+    return out
+
+
 def live(repo, token):
     """The settings, in the shape expected.json holds them."""
     r = f"/repos/{repo}"
     rulesets = []
     for summary in get(f"{r}/rulesets?includes_parents=true&per_page=100", token):
-        full = get(f"{r}/rulesets/{summary['id']}", token)
-        if "bypass_actors" not in full:
-            # GitHub leaves the bypass list out for a reader without admin read.
-            raise Unreadable(f"ruleset {full.get('name')}: its bypass list is not visible to this token")
-        rulesets.append(
-            {
-                "name": full["name"],
-                "source_type": full.get("source_type"),
-                "target": full["target"],
-                "enforcement": full["enforcement"],
-                "conditions": full.get("conditions"),
-                "bypass_actors": sorted(
-                    full["bypass_actors"], key=lambda a: (a["actor_type"], str(a["actor_id"]))
-                ),
-                "rules": sorted(full["rules"], key=lambda rule: rule["type"]),
-            }
-        )
+        rulesets.append(ruleset(get(f"{r}/rulesets/{summary['id']}", token)))
     repository = get(r, token)
     admins = get(f"{r}/collaborators?affiliation=all&permission=admin&per_page=100", token)
     return {
@@ -153,9 +183,14 @@ def main(argv):
         return 0
     with open(EXPECTED) as f:
         expected = json.load(f)
-    found = differences(expected, actual)
+    found = differences(comparable(expected, actual), actual)
     for d in found:
         print(f"drift: {d}")
+    if any(".updated_at" in d for d in found):
+        print(
+            "drift: a ruleset changed. Its bypass list may be what changed, and this token cannot see it: "
+            "read it with an admin's token and --print"
+        )
     if not found:
         print("check_settings: the settings are as expected")
     return 1 if found else 0
