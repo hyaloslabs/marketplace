@@ -22,8 +22,8 @@ as with --print), it is compared as well.
     check_settings.py <owner/repo> --print    print the live settings as expected.json holds them
 
 The token is SETTINGS_READ_TOKEN. In settings.yml it is minted from the check's own GitHub App,
-installed on this repository alone, with Administration and Metadata read-only and nothing else. By
-hand, an admin's own token reads the same settings.
+installed on this repository alone, with Actions, Administration and Metadata read-only and nothing
+else. By hand, an admin's own token reads the same settings.
 """
 
 import datetime
