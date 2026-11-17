@@ -22,7 +22,6 @@ time, which Hyalos compares to decide which of two snapshots is newer and how ol
 import datetime
 import json
 import os
-import shutil
 import sys
 import tempfile
 
@@ -72,12 +71,15 @@ def fetch(directory):
         targets = os.path.join(tmp, "targets")
         os.makedirs(metadata)
         os.makedirs(targets)
-        shutil.copyfile(TUF_ROOT, os.path.join(metadata, "root.json"))
+        with open(TUF_ROOT, "rb") as f:
+            pinned = f.read()
+        # The pinned root is where trust starts; python-tuf walks forward from it to the newest.
         updater = Updater(
             metadata_dir=metadata,
             metadata_base_url=TUF_URL,
             target_dir=targets,
             target_base_url=f"{TUF_URL}/targets/",
+            bootstrap=pinned,
         )
         updater.refresh()
         info = updater.get_targetinfo(TARGET)
