@@ -174,6 +174,26 @@ class Settings(unittest.TestCase):
             with self.assertRaises(check_settings.Unreadable, msg=bad):
                 check_settings.changed_at(bad)
 
+    def test_no_visible_admin_is_unreadable(self):
+        import check_settings
+
+        real = check_settings.get
+
+        def get(path, token):
+            if "/rulesets" in path or "/collaborators" in path:
+                return []
+            if path == "/repos/hyaloslabs/marketplace":
+                return {"visibility": "private", "default_branch": "main"}
+            raise check_settings.Unreadable("not reached")
+
+        check_settings.get = get
+        try:
+            with self.assertRaises(check_settings.Unreadable) as raised:
+                check_settings.live("hyaloslabs/marketplace", "t")
+        finally:
+            check_settings.get = real
+        self.assertIn("admins", str(raised.exception))
+
     def test_without_a_token_nothing_passes(self):
         result = subprocess.run(
             [sys.executable, os.path.join(ROOT, "tools", "check_settings.py"), "hyaloslabs/marketplace"],
