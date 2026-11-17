@@ -25,13 +25,13 @@ name: release
 #    sign: each archive and the snapshot are signed keylessly, and each bundle verified for the
 #    pinned identity (S7.2, S7.11).
 # 4. publish: index.json beside the archives, the snapshot and their bundles, as a GitHub release
-#    (ADR-0090), when the index changed or the snapshot is due (changed, or 30 days old).
+#    (ADR-0090), when the index changed or the snapshot is due (changed, or 7 days old).
 #    alert: if anything failed, an issue labelled release-failed says so, and nothing was published.
 on:
   push:
     branches: [main]
   schedule:
-    # Daily, so a new trusted root reaches a release within a day and none is older than 30 days.
+    # Daily, so a new trusted root reaches a release within a day and none is older than 7 days.
     - cron: "41 4 * * *"
 
 permissions:
