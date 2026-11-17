@@ -22,7 +22,8 @@ as with --print), it is compared as well.
     check_settings.py <owner/repo> --print    print the live settings as expected.json holds them
 
 The token is SETTINGS_READ_TOKEN. In settings.yml it is minted from the check's own GitHub App,
-installed on this repository alone, with Actions, Administration and Metadata read-only and nothing
+installed on this repository alone, with Actions, Administration and Metadata read-only, and the
+organization's Members read-only so that organization owners show among the admins, and nothing
 else. By hand, an admin's own token reads the same settings.
 """
 
@@ -107,6 +108,10 @@ def live(repo, token):
         rulesets.append(ruleset(get(f"{r}/rulesets/{summary['id']}", token)))
     repository = get(r, token)
     admins = get(f"{r}/collaborators?affiliation=all&permission=admin&per_page=100", token)
+    if not admins:
+        # A repository always has an admin. None means the token cannot see them, which for an
+        # organization's owners takes Members read.
+        raise Unreadable("the repository's admins: none are visible to this token")
     return {
         "repository": {
             "visibility": repository["visibility"],
