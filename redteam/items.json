@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "items": [
+    {"id": "inject.ignore_instructions", "why": "tells the agent to drop its instructions", "pattern": "\\b(ignore|disregard|forget)\\s+(all\\s+|any\\s+)?(of\\s+)?(your|the|previous|prior|above|earlier)\\s+(\\w+\\s+)?(instructions|rules|prompt|guidelines)"},
+    {"id": "inject.new_role", "why": "tries to give the agent a new identity or mode", "pattern": "\\byou\\s+are\\s+now\\b|\\bdeveloper\\s+mode\\b|\\bjailbreak|\\bDAN\\b"},
+    {"id": "inject.system_prompt", "why": "claims to be, or asks for, the system prompt", "pattern": "\\bsystem\\s+prompt\\b|<\\|?(system|im_start)\\|?>|\\[INST\\]"},
+    {"id": "inject.grant", "why": "asks for capabilities, approval or a policy change in prose", "pattern": "\\b(grant|approve|allow)\\s+(it\\s+)?(everything|all\\s+(capabilities|permissions|actions))|\\b(change|disable|bypass)\\s+the\\s+(policy|sandbox|gate)"},
+    {"id": "inject.conceal", "why": "asks the agent to hide what it does from the operator", "pattern": "\\b(do\\s+not|don't|never)\\s+(tell|inform|mention|show|report)\\b[^.\\n]{0,40}\\b(user|operator|human|anyone)"},
+    {"id": "exfil.send", "why": "asks for code, secrets or context to be sent out", "pattern": "\\b(send|post|upload|exfiltrate|forward)\\b[^.\\n]{0,40}\\b(secret|token|credential|key|password|env|repository|source\\s+code)s?\\b"},
+    {"id": "hidden.invisible", "why": "carries invisible or direction-changing characters", "pattern": "[\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2064\\u2066-\\u2069\\ufeff]"},
+    {"id": "hidden.comment", "why": "hides instructions in an HTML comment", "pattern": "<!--[^>]*\\b(instruction|ignore|agent|assistant|model)\\b"}
+  ]
+}

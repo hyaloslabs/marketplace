@@ -22,6 +22,8 @@ name: release
 #    list (S7.7).  A skill whose archive is revoked fails the build.
 #    snapshot: Sigstore's trusted root is fetched through TUF and verified (S7.11).
 # 2. compare: the two builds must be the same bytes, or nothing is signed.
+#    evidence: static analysis, the red-team items and the capability diff against the last release
+#    all pass, or nothing is signed (S7.4, ADR-0100 in hyaloslabs/hyalos).
 # 3. settings: the daily settings check last passed, within 8 days, with no drift open (ADR-0095).
 #    sign: each archive, the snapshot and the revocation list are signed keylessly, and each bundle
 #    verified for the pinned identity (S7.2, S7.11, S7.7).
@@ -112,6 +114,38 @@ jobs:
           diff -r a b || { echo "the two builds differ: nothing is signed"; exit 1; }
           (cd a && sha256sum -c DIGESTS)
 
+  evidence:
+    name: static analysis, red-team items and the capability diff
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build-ubuntu-24.04
+          path: dist
+      - name: The last release's archives, to diff against
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir previous
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern '*.skill' --dir previous \
+            || echo "no release yet: every capability a skill asks for is new"
+      - name: Every check passes, or nothing is signed
+        run: |
+          shellcheck --version | head -2
+          python3 tools/evidence.py dist previous --require-shellcheck --report evidence.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: evidence
+          path: evidence.json
+          if-no-files-found: warn
+          retention-days: 90
+
   settings:
     name: the protection settings were checked
     runs-on: ubuntu-24.04
@@ -139,7 +173,7 @@ jobs:
 
   sign:
     name: sign keylessly
-    needs: [compare, settings, snapshot]
+    needs: [compare, evidence, settings, snapshot]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # The only job that can ask for a signing token.
@@ -261,7 +295,7 @@ jobs:
 
   alert:
     name: say that the release failed
-    needs: [build, snapshot, compare, settings, sign, publish]
+    needs: [build, snapshot, compare, evidence, settings, sign, publish]
     if: failure()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -13,6 +13,7 @@ Skills for [Hyalos](https://github.com/hyaloslabs/hyalos), built reproducibly an
 | `tools/index.py` | Writes `index.json` for a release |
 | `tools/check_workflows.py` | Fails if a workflow could sign other than as the release pipeline, or reach the settings token |
 | `tools/snapshot.py`, `trust/sigstore-tuf-root.json`, `tools/requirements-snapshot.txt` | Fetches Sigstore's trusted root through TUF, from the TUF root pinned here, with a hash-pinned client, and wraps it as the snapshot Hyalos imports |
+| `tools/evidence.py`, `redteam/`, `capability-changes.json` | The evidence every release must pass, or nothing is signed: static analysis of each skill (its capabilities, its files, shellcheck), the red-team items, and the capability diff against the last release, in which every added name is listed in `capability-changes.json` |
 | `revocations.json`, `tools/revocations.py` | The releases proven malicious, by digest, with a reason code. An entry is never removed. Every release carries the list, signed |
 | `tools/check_settings.py`, `settings/expected.json` | The repository's protection settings, and what they must be |
 | `tests/reference/` | A fixed skill whose digest Hyalos pins too, so the two archive writers cannot drift |
@@ -48,6 +49,16 @@ hyalos plugin install --index ./marketplace hello
 ```
 
 The directory is an offline bundle (ADR-0090): the same check runs with no network.
+
+## What every release must pass
+
+`tools/evidence.py` runs on every pull request, against the base, and in `release.yml` before anything is signed, against the last release (S7.4, ADR-0100 in the Hyalos repository). A failure in any of these blocks publication:
+
+- **Static analysis.** `capabilities.json` asks only for names in Hyalos's vocabulary, and never for an action the shipped policy refuses a job. No file is binary. A script fetches nothing unless the skill asks for egress, runs nothing it decodes or downloads, and reads no credential or environment. Every URL names a host the skill asks for. `shellcheck` passes at warning level.
+- **Red-team items.** No file matches an item in `redteam/items.json`: prompt injections, attempts to conceal or exfiltrate, and hidden text. Each item has a case in `redteam/cases/` that it must catch.
+- **The capability diff.** Every capability a release adds over the last release of the skill is listed for its name and version in `capability-changes.json`, as `{"<name> <version>": {"egress_hosts": ["docs.rs"]}}`. That file changes only in a reviewed pull request.
+
+The report is in the run's summary and its `evidence` artifact.
 
 ## Revoking a release
 
