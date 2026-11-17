@@ -66,6 +66,9 @@ jobs:
         id: compare
         env:
           SETTINGS_READ_TOKEN: ${{ steps.app.outputs.token }}
+          # To read the App's own grant as the App (ADR-0096 in hyaloslabs/hyalos).
+          SETTINGS_APP_CLIENT_ID: ${{ vars.SETTINGS_APP_CLIENT_ID }}
+          SETTINGS_APP_KEY: ${{ secrets.SETTINGS_APP_KEY }}
         run: |
           set +e
           python3 tools/check_settings.py "$GITHUB_REPOSITORY" > report.txt 2>&1

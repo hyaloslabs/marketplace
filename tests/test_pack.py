@@ -194,6 +194,80 @@ class Settings(unittest.TestCase):
             check_settings.get = real
         self.assertIn("admins", str(raised.exception))
 
+    def fake_app(self, permissions=None, repositories=("hyaloslabs/marketplace",)):
+        """The App's answers, as GitHub gives them; and the calls made, to check the token is revoked."""
+        import check_settings
+
+        with open(check_settings.EXPECTED) as f:
+            grant = json.load(f)["app"]["permissions"]
+        calls = []
+
+        def get(path, token, method="GET", body=None):
+            calls.append((method, path, token, body))
+            if path == "/app":
+                return {"owner": {"login": "hyaloslabs"}, "permissions": grant, "events": []}
+            if path.startswith("/app/installations?"):
+                return [
+                    {
+                        "id": 7,
+                        "account": {"login": "hyaloslabs"},
+                        "repository_selection": "selected",
+                        "permissions": permissions or grant,
+                        "events": [],
+                    }
+                ]
+            if path == "/app/installations/7/access_tokens":
+                return {"token": "listing"}
+            if path.startswith("/installation/repositories"):
+                return {"repositories": [{"full_name": r} for r in repositories]}
+            if path == "/installation/token":
+                return None
+            raise check_settings.Unreadable(path)
+
+        return check_settings, get, calls
+
+    def app_differences(self, **kw):
+        check_settings, get, calls = self.fake_app(**kw)
+        real = check_settings.get, check_settings.app_jwt
+        check_settings.get, check_settings.app_jwt = get, lambda client_id, key: "jwt"
+        try:
+            actual = check_settings.app("Iv23", "key")
+        finally:
+            check_settings.get, check_settings.app_jwt = real
+        with open(check_settings.EXPECTED) as f:
+            expected = json.load(f)["app"]
+        return check_settings.differences(expected, actual), calls
+
+    def test_the_app_as_granted_matches(self):
+        found, calls = self.app_differences()
+        self.assertEqual(found, [])
+        # The listing token asked for metadata only, and was revoked.
+        self.assertIn(("POST", "/app/installations/7/access_tokens", "jwt", {"permissions": {"metadata": "read"}}), calls)
+        self.assertIn(("DELETE", "/installation/token", "listing", None), calls)
+
+    def test_a_widened_app_is_named(self):
+        import check_settings
+
+        with open(check_settings.EXPECTED) as f:
+            wider = dict(json.load(f)["app"]["permissions"], administration="write")
+        found, _ = self.app_differences(permissions=wider)
+        self.assertTrue(any("installations[0].permissions.administration" in d for d in found), found)
+        found, _ = self.app_differences(repositories=("hyaloslabs/marketplace", "hyaloslabs/hyalos"))
+        self.assertTrue(any("installations[0].repositories" in d for d in found), found)
+
+    def test_without_the_app_key_nothing_passes(self):
+        result = subprocess.run(
+            [sys.executable, os.path.join(ROOT, "tools", "check_settings.py"), "hyaloslabs/marketplace"],
+            capture_output=True,
+            text=True,
+            env={
+                **{k: v for k, v in os.environ.items() if not k.startswith("SETTINGS_")},
+                "SETTINGS_READ_TOKEN": "t",
+            },
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("SETTINGS_APP_KEY are not both set", result.stderr)
+
     def test_without_a_token_nothing_passes(self):
         result = subprocess.run(
             [sys.executable, os.path.join(ROOT, "tools", "check_settings.py"), "hyaloslabs/marketplace"],

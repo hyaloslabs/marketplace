@@ -9,7 +9,9 @@ loosened. This reads them and names every one that differs:
 - every ruleset on the repository, with its rules and conditions, and the time it was last changed;
 - the Actions settings: which actions may run, the default token permissions, whether a workflow may
   approve a pull request, and which other repositories may use these workflows;
-- who holds admin, the visibility, forking, and the environments.
+- who holds admin, the visibility, forking, and the environments;
+- the check's own App: its permissions and events, and for each installation, its grant and the
+  repositories it covers (ADR-0096 in hyaloslabs/hyalos), so a widened App is drift too.
 
 It only reads. A setting it cannot read is an error, never a match.
 
@@ -25,11 +27,18 @@ The token is SETTINGS_READ_TOKEN. In settings.yml it is minted from the check's 
 installed on this repository alone, with Actions, Administration and Metadata read-only, and the
 organization's Members read-only so that organization owners show among the admins, and nothing
 else. By hand, an admin's own token reads the same settings.
+
+The App is read as the App, from SETTINGS_APP_CLIENT_ID and SETTINGS_APP_KEY. Without them the
+check cannot read it, which is an error. --print without them keeps the file's `app` section and
+says so.
 """
 
+import base64
 import datetime
 import json
 import os
+import subprocess
+import time
 import sys
 import urllib.error
 import urllib.request
@@ -42,18 +51,22 @@ class Unreadable(Exception):
     """A setting that could not be read: never treated as a match."""
 
 
-def get(path, token):
+def get(path, token, method="GET", body=None):
     request = urllib.request.Request(
         f"{API}{path}",
+        method=method,
+        data=None if body is None else json.dumps(body).encode(),
         headers={
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
             "X-GitHub-Api-Version": "2022-11-28",
+            **({"Content-Type": "application/json"} if body is not None else {}),
         },
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            return json.load(response)
+            raw = response.read()
+            return json.loads(raw) if raw else None
     except (urllib.error.URLError, TimeoutError, ValueError) as e:
         # The status only, never the body or the token.
         status = getattr(e, "code", None)
@@ -98,6 +111,72 @@ def comparable(expected, actual):
         if s.get("name") in hidden:
             s.pop("bypass_actors", None)
     return out
+
+
+def app_jwt(client_id, key):
+    """A ten-minute JWT for the App, signed by openssl. The key reaches openssl through a pipe only."""
+    def part(value):
+        return base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).rstrip(b"=")
+
+    now = int(time.time())
+    signing = part({"alg": "RS256", "typ": "JWT"}) + b"." + part({"iat": now - 60, "exp": now + 540, "iss": client_id})
+    read, write = os.pipe()
+    try:
+        os.write(write, key.encode())
+        os.close(write)
+        write = None
+        signed = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", f"/dev/fd/{read}"],
+            input=signing,
+            capture_output=True,
+            pass_fds=(read,),
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise Unreadable("the App: its key could not be used") from None
+    finally:
+        os.close(read)
+        if write is not None:
+            os.close(write)
+    if signed.returncode != 0 or not signed.stdout:
+        # openssl's own message could quote the key's file; say only that it failed.
+        raise Unreadable("the App: its key could not be used")
+    return (signing + b"." + base64.urlsafe_b64encode(signed.stdout).rstrip(b"=")).decode()
+
+
+def app(client_id, key):
+    """The App's own grant: what it asks for, and what each installation gave it, where."""
+    jwt = app_jwt(client_id, key)
+    me = get("/app", jwt)
+    installations = []
+    for i in get("/app/installations?per_page=100", jwt):
+        # A token for this installation that can read metadata and nothing else, only to list the
+        # repositories it covers, revoked at once.
+        token = get(
+            f"/app/installations/{i['id']}/access_tokens", jwt, "POST", {"permissions": {"metadata": "read"}}
+        )["token"]
+        try:
+            repositories = get("/installation/repositories?per_page=100", token)["repositories"]
+        finally:
+            try:
+                get("/installation/token", token, "DELETE")
+            except Unreadable:
+                pass  # It expires within the hour anyway.
+        installations.append(
+            {
+                "account": i["account"]["login"],
+                "repository_selection": i["repository_selection"],
+                "permissions": i["permissions"],
+                "events": sorted(i.get("events", [])),
+                "repositories": sorted(r["full_name"] for r in repositories),
+            }
+        )
+    return {
+        "owner": me["owner"]["login"],
+        "permissions": me["permissions"],
+        "events": sorted(me.get("events", [])),
+        "installations": sorted(installations, key=lambda i: i["account"]),
+    }
 
 
 def live(repo, token):
@@ -174,20 +253,38 @@ def main(argv):
     if len(argv) not in (2, 3) or (len(argv) == 3 and argv[2] != "--print"):
         print("usage: check_settings.py <owner/repo> [--print]", file=sys.stderr)
         return 2
+    printing = len(argv) == 3
     token = os.environ.get("SETTINGS_READ_TOKEN", "")
     if not token:
         print("check_settings: SETTINGS_READ_TOKEN is not set, so nothing was checked", file=sys.stderr)
         return 1
+    client_id = os.environ.get("SETTINGS_APP_CLIENT_ID", "")
+    key = os.environ.get("SETTINGS_APP_KEY", "")
+    with open(EXPECTED) as f:
+        expected = json.load(f)
+    if not printing and not (client_id and key):
+        print(
+            "check_settings: SETTINGS_APP_CLIENT_ID and SETTINGS_APP_KEY are not both set, so nothing was checked",
+            file=sys.stderr,
+        )
+        return 1
     try:
         actual = live(argv[1], token)
+        if client_id and key:
+            actual["app"] = app(client_id, key)
+        elif "app" in expected:
+            actual["app"] = expected["app"]
+            print("check_settings: the App was not read (no SETTINGS_APP_KEY); its section is the file's", file=sys.stderr)
     except Unreadable as e:
         print(f"check_settings: cannot read {e}, so nothing was checked", file=sys.stderr)
         return 1
-    if len(argv) == 3:
+    except (KeyError, TypeError, IndexError):
+        # An answer of a shape this does not know. Not its contents: they may hold a token.
+        print("check_settings: cannot read an answer of an unexpected shape, so nothing was checked", file=sys.stderr)
+        return 1
+    if printing:
         print(json.dumps(actual, indent=2, sort_keys=True))
         return 0
-    with open(EXPECTED) as f:
-        expected = json.load(f)
     found = differences(comparable(expected, actual), actual)
     for d in found:
         print(f"drift: {d}")
