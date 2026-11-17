@@ -45,6 +45,11 @@ jobs:
           else
             echo "the base has no skills yet"
           fi
+      - name: Static analysis, red-team items and the capability diff against the base
+        run: |
+          base="$RUNNER_TEMP/base"
+          [ -d "$base" ] || base=""
+          python3 tools/evidence.py "$RUNNER_TEMP/head" $base --require-shellcheck
       - name: No revocation is dropped
         if: github.event_name == 'pull_request'
         run: |
