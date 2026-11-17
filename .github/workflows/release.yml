@@ -18,14 +18,16 @@ name: release
 # its schedule, or if any job but `sign` can request a token. A scheduled run runs main's own file at
 # refs/heads/main, so it signs as the same identity (ADR-0097).
 #
-# 1. build: every skill is built on two runner images, independently (S7.1).
+# 1. build: every skill is built on two runner images, independently (S7.1), with the revocation
+#    list (S7.7).  A skill whose archive is revoked fails the build.
 #    snapshot: Sigstore's trusted root is fetched through TUF and verified (S7.11).
 # 2. compare: the two builds must be the same bytes, or nothing is signed.
 # 3. settings: the daily settings check last passed, within 8 days, with no drift open (ADR-0095).
-#    sign: each archive and the snapshot are signed keylessly, and each bundle verified for the
-#    pinned identity (S7.2, S7.11).
+#    sign: each archive, the snapshot and the revocation list are signed keylessly, and each bundle
+#    verified for the pinned identity (S7.2, S7.11, S7.7).
 # 4. publish: index.json beside the archives, the snapshot and their bundles, as a GitHub release
-#    (ADR-0090), when the index changed or the snapshot is due (changed, or 7 days old).
+#    (ADR-0090), when the index or the revocation list changed, or the snapshot is due (changed, or
+#    7 days old).
 #    alert: if anything failed, an issue labelled release-failed says so, and nothing was published.
 on:
   push:
@@ -161,13 +163,13 @@ jobs:
       - name: Sign each archive and the snapshot
         run: |
           cd dist
-          for archive in *.skill trusted-root.json; do
+          for archive in *.skill trusted-root.json revocations.json; do
             cosign sign-blob --yes --bundle "$archive.sigstore.json" "$archive"
           done
       - name: Each bundle verifies for the pinned identity, and for no other
         run: |
           cd dist
-          for archive in *.skill trusted-root.json; do
+          for archive in *.skill trusted-root.json revocations.json; do
             cosign verify-blob --bundle "$archive.sigstore.json" \
               --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" \
               --certificate-github-workflow-repository "${{ github.repository }}" \
@@ -209,6 +211,8 @@ jobs:
             python3 tools/index.py dist --previous previous/index.json
             gh release download --repo "$GITHUB_REPOSITORY" --pattern trusted-root.json --dir previous \
               || echo "the last release has no trusted-root snapshot"
+            gh release download --repo "$GITHUB_REPOSITORY" --pattern revocations.json --dir previous \
+              || echo "the last release has no revocation list"
             at=$(gh release view --repo "$GITHUB_REPOSITORY" --json publishedAt --jq .publishedAt)
             echo "SNAPSHOT_PUBLISHED_AT=$at" >> "$GITHUB_ENV"
           elif grep -qi 'release not found' err; then
@@ -216,12 +220,21 @@ jobs:
           else
             cat err; exit 1
           fi
-      - name: Publish only when the index changed or the snapshot is due
+      - name: Publish only when the index or the revocation list changed, or the snapshot is due
         run: |
           same_index=no
           if [ -f previous/index.json ] && cmp -s <(jq -S . previous/index.json) <(jq -S . dist/index.json); then
             same_index=yes
           fi
+          set +e
+          python3 tools/revocations.py due dist/revocations.json previous/revocations.json
+          changed=$?
+          set -e
+          case "$changed" in
+            0) same_index=no ;;
+            1) ;;
+            *) exit 1 ;;
+          esac
           set +e
           python3 tools/snapshot.py due dist/trusted-root.json previous/trusted-root.json
           due=$?
@@ -243,7 +256,8 @@ jobs:
             --title "$tag" \
             --notes "Skills and Sigstore's trusted root, built and signed from ${GITHUB_SHA}." \
             dist/index.json dist/*.skill dist/*.skill.sigstore.json \
-            dist/trusted-root.json dist/trusted-root.json.sigstore.json
+            dist/trusted-root.json dist/trusted-root.json.sigstore.json \
+            dist/revocations.json dist/revocations.json.sigstore.json
 
   alert:
     name: say that the release failed

@@ -7,7 +7,8 @@ signs only when the two agree.
 
 Each directory under skills/ is one skill, named by its SKILL.md and listed in versions.json with its
 version. A skill missing from versions.json, a version for no skill, or a directory named other than
-its skill is refused.
+its skill is refused, and so is a skill whose archive revocations.json revokes: a revoked release is
+never published again (ADR-0098). It also writes the revocation list a release carries.
 
     build.py <out-dir>
 """
@@ -20,6 +21,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pack  # noqa: E402
+import revocations  # noqa: E402
 
 VERSION = re.compile(r"[A-Za-z0-9.+-]{1,64}\Z")
 
@@ -36,6 +38,10 @@ def build(root, out):
         raise pack.Refused(
             f"versions.json lists {sorted(versions)}, skills/ holds {names}: each needs the other"
         )
+    try:
+        revoked = revocations.revoked(os.path.join(root, "revocations.json"))
+    except revocations.Refused as e:
+        raise pack.Refused(f"revocations.json: {e}")
     built = []
     for directory in names:
         name, data = pack.pack(os.path.join(skills_dir, directory))
@@ -45,6 +51,8 @@ def build(root, out):
         if not isinstance(version, str) or not VERSION.match(version):
             raise pack.Refused(f"{name}: a version is 1 to 64 letters, digits, '.', '+' and '-'")
         artifact = f"{name}-{version}.skill"
+        if hashlib.sha256(data).hexdigest() in revoked:
+            raise pack.Refused(f"{name} {version} is revoked: release other bytes under a new version")
         with open(os.path.join(out, artifact), "xb") as f:
             f.write(data)
         built.append((name, version, artifact, hashlib.sha256(data).hexdigest()))
@@ -66,6 +74,8 @@ def main(argv):
         for name, version, artifact, digest in built:
             f.write(f"{digest}  {artifact}\n")
             print(f"{name} {version} {digest}")
+    with open(os.path.join(argv[1], revocations.FILE), "x") as f:
+        f.write(revocations.wrap(revocations.load(os.path.join(root, "revocations.json"))))
     return 0
 
 
