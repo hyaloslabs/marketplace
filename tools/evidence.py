@@ -29,6 +29,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
@@ -44,17 +45,32 @@ FIELDS = ("actions", "egress_hosts", "tools", "data_flows")
 HOST = re.compile(r"(?=.{1,253}\Z)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*\Z")
 TOOL = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 
-# Static rules over a script's text: (id, what it finds, pattern). A script is a file that is
-# executable, ends in .sh, .py or .bash, or starts with #!.
+# Static rules over a file's text: (id, what it finds, pattern). They run on every text file, since
+# SKILL.md is what the agent is told to do. NETWORK runs on scripts: files that are executable, end in
+# .sh, .py or .bash, or start with #!.
 NETWORK = re.compile(r"\b(curl|wget|nc|ncat|socat|telnet|ftp|scp|rsync)\b|/dev/(tcp|udp)/|urllib|requests\.|http\.client|socket\.")
 STATIC = [
     ("exec.decoded", "runs what it decodes or downloads",
-     re.compile(r"\|\s*(ba|z|da)?sh\b|\beval\b|\bexec\s*\(|base64\s+(-d|--decode)|\bxxd\s+-r|\bsource\s+<\(")),
+     re.compile(r"\|\s*(sudo\s+)?(\S*/)?(ba|z|da|k|fi)?sh\b|\|\s*(sudo\s+)?(\S*/)?(python\d?|perl|ruby|node)\b"
+                r"|\b(ba|z)?sh\s+(-c\s+)?[\"']?\$\(|\b(ba|z)?sh\s+<\(|(^|[\s;&])(\.|source)\s+<\(|\$\(\s*(curl|wget)\b"
+                r"|\beval\b|\bexec\s*\(|base64\s+(-d|--decode)|\bxxd\s+-r", re.M)),
     ("secret.read", "reads a credential or the environment",
      re.compile(r"\.ssh/|\.aws/|\.netrc|\.git-credentials|\.docker/config|/etc/shadow|\bprintenv\b|"
                 r"\benv\s*($|\||>)|os\.environ|GITHUB_TOKEN|GH_TOKEN|_API_KEY|AWS_SECRET", re.M)),
 ]
-URL = re.compile(r"\bhttps?://([A-Za-z0-9.-]+)")
+URL = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s'\"<>()`]+", re.I)
+
+
+def url_hosts(text):
+    """The host of each URL in `text`, lowercased, or None where it has none in ASCII."""
+    out = []
+    for url in URL.findall(text):
+        try:
+            host = urllib.parse.urlsplit(url).hostname
+        except ValueError:
+            host = None
+        out.append(host if host and host.isascii() else None)
+    return out
 DOMAIN = pack.DOMAIN
 
 
@@ -133,17 +149,20 @@ def static(files, wanted):
         if "\0" in text:
             found.append(("file.binary", path))
             continue
-        for host in URL.findall(text):
-            if host.lower() not in wanted["egress_hosts"]:
-                found.append(("url.undeclared", path))
-                break
-        if not is_script(path, executable, data):
-            continue
-        if NETWORK.search(text) and not wanted["egress_hosts"]:
-            found.append(("network.undeclared", path))
+        if any(h is None or h not in wanted["egress_hosts"] for h in url_hosts(text)):
+            found.append(("url.undeclared", path))
         for rule, _, pattern in STATIC:
             if pattern.search(text):
                 found.append((rule, path))
+        if not is_script(path, executable, data):
+            continue
+        # Each line that reaches the network names, as a URL, a host the skill asks for.
+        for line in text.splitlines():
+            if NETWORK.search(line):
+                hosts = url_hosts(line)
+                if not hosts or any(h is None or h not in wanted["egress_hosts"] for h in hosts):
+                    found.append(("network.undeclared", path))
+                    break
     return found
 
 
@@ -193,10 +212,12 @@ def diff(new, old):
 
 
 def latest(archives):
-    """{name: (version, asks)} of the newest archive of each skill in a directory, by file name order
-    of version as build.py names them."""
+    """{name: (version, asks)} for the one archive of each skill in a directory, as build.py and a
+    release hold them. Two archives of one skill are refused: which is the last would be a guess."""
     out = {}
     for name, version, files in archives:
+        if name in out:
+            raise Refused(f"two archives of {name}")
         out[name] = (version, asks(files))
     return out
 
@@ -223,16 +244,32 @@ def acknowledged(root=ROOT):
         return {}
     with open(path) as f:
         doc = json.load(f)
-    return {k: {f: set(v.get(f, [])) for f in FIELDS} for k, v in doc.items()}
+    if not isinstance(doc, dict):
+        raise Refused("capability-changes.json is not an object")
+    out = {}
+    for key, value in doc.items():
+        if not isinstance(value, dict) or set(value) - set(FIELDS):
+            raise Refused("capability-changes.json: each entry is {field: [names]}")
+        for names in value.values():
+            if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+                raise Refused("capability-changes.json: each field is a list of names")
+        out[key] = {f: set(value.get(f, [])) for f in FIELDS}
+    return out
 
 
 def check(new_dir, old_dir=None, require_shellcheck=False, root=ROOT):
     """The evidence for each archive in `new_dir`, and whether all of it passed."""
     items = load_items(root)
+    if not os.path.isdir(new_dir):
+        raise Refused(f"{new_dir}: no such directory of archives")
+    new = read_dir(new_dir)
+    if not new:
+        raise Refused(f"{new_dir}: no skill archive to check")
+    latest(new)
     old = latest(read_dir(old_dir))
     acks = acknowledged(root)
     report, ok = [], True
-    for name, version, files in read_dir(new_dir):
+    for name, version, files in new:
         digest = hashlib.sha256(pack.archive(files)).hexdigest()
         entry = {"skill": name, "version": version, "digest": digest}
         try:
@@ -244,7 +281,11 @@ def check(new_dir, old_dir=None, require_shellcheck=False, root=ROOT):
                             else static(files, wanted) + shellcheck(files, require_shellcheck))]
         entry["redteam"] = [{"item": i, "path": p} for i, p in redteam(files, items)]
         before = old.get(name, (None, {f: set() for f in FIELDS}))
-        added = diff(wanted, before[1]) if wanted is not None else {}
+        # Only names in the vocabulary are reported: anything else is a static finding already, and
+        # its text is the skill's, which never reaches the report.
+        known = ({f: {n for n in ns if in_vocabulary(f, n)} for f, ns in wanted.items()}
+                 if wanted is not None else None)
+        added = diff(known, before[1]) if known is not None else {}
         ack = acks.get(f"{name} {version}", {f: set() for f in FIELDS})
         unacked = {f: n for f, ns in added.items() if (n := sorted(set(ns) - ack[f]))}
         entry["capabilities"] = {"against": before[0], "added": added, "unacknowledged": unacked}
