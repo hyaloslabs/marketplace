@@ -45,6 +45,15 @@ jobs:
           else
             echo "the base has no skills yet"
           fi
+      - name: No revocation is dropped
+        if: github.event_name == 'pull_request'
+        run: |
+          base="$RUNNER_TEMP/base-tree/revocations.json"
+          if [ -f "$base" ]; then
+            python3 tools/revocations.py kept "$base" revocations.json
+          else
+            echo "the base has no revocation list yet"
+          fi
 
   snapshot:
     name: the trusted-root snapshot fetches through TUF

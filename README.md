@@ -13,6 +13,7 @@ Skills for [Hyalos](https://github.com/hyaloslabs/hyalos), built reproducibly an
 | `tools/index.py` | Writes `index.json` for a release |
 | `tools/check_workflows.py` | Fails if a workflow could sign other than as the release pipeline, or reach the settings token |
 | `tools/snapshot.py`, `trust/sigstore-tuf-root.json`, `tools/requirements-snapshot.txt` | Fetches Sigstore's trusted root through TUF, from the TUF root pinned here, with a hash-pinned client, and wraps it as the snapshot Hyalos imports |
+| `revocations.json`, `tools/revocations.py` | The releases proven malicious, by digest, with a reason code. An entry is never removed. Every release carries the list, signed |
 | `tools/check_settings.py`, `settings/expected.json` | The repository's protection settings, and what they must be |
 | `tests/reference/` | A fixed skill whose digest Hyalos pins too, so the two archive writers cannot drift |
 
@@ -47,6 +48,16 @@ hyalos plugin install --index ./marketplace hello
 ```
 
 The directory is an offline bundle (ADR-0090): the same check runs with no network.
+
+## Revoking a release
+
+A release proven malicious is revoked by adding its archive's digest to `revocations.json` with a reason code, in a pull request (S7.7, ADR-0098 in the Hyalos repository):
+
+```json
+{"revoked": [{"digest": "<sha256 of the .skill>", "reason": "malware.exfiltration"}], "version": 1}
+```
+
+Merging it publishes a release whose signed `revocations.json` lists it. Hyalos refuses to install that digest, and an install that reads the list disables a copy already installed. An air-gapped install gets the list in the next release directory it imports. CI refuses a pull request that drops an entry, and the build refuses a skill whose archive is revoked, so the skill needs other bytes under a new version.
 
 ## Adding a skill
 
