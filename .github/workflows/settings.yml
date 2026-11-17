@@ -10,10 +10,10 @@ name: settings
 # has not passed in the last 8 days, so a schedule that stopped is noticed at the next release.
 #
 # Its token comes from a GitHub App of its own that is installed on this repository alone and can
-# read Administration and Metadata only. Each run mints a token from it that lasts an hour, asks for
-# just those two permissions, and is revoked when the job ends. The app's client ID
-# (SETTINGS_APP_CLIENT_ID, a variable) and private key (SETTINGS_APP_KEY, a secret) are held in the
-# settings-check environment, which only main may use. Only this job names them
+# read Actions, Administration and Metadata only (environments are under Actions). Each run mints a
+# token from it that lasts an hour, asks for just those three permissions, and is revoked when the
+# job ends. The app's client ID (SETTINGS_APP_CLIENT_ID, a variable) and private key
+# (SETTINGS_APP_KEY, a secret) are held in the settings-check environment, which only main may use. Only this job names them
 # (tools/check_workflows.py). The operator creates the app; see README.md.
 #
 # A change to the settings on purpose: update settings/expected.json in the same pull request, from
@@ -57,6 +57,7 @@ jobs:
         with:
           client-id: ${{ vars.SETTINGS_APP_CLIENT_ID }}
           private-key: ${{ secrets.SETTINGS_APP_KEY }}
+          permission-actions: read
           permission-administration: read
           permission-metadata: read
       - name: Compare

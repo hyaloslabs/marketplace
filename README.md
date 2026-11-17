@@ -36,9 +36,9 @@ To change a setting on purpose, change it, then update `settings/expected.json` 
 
 GitHub shows a ruleset's bypass list only to a token that can write to rulesets, and the check's token can only read. So `settings/expected.json` also pins each ruleset's last change time: any edit to a ruleset is drift, even one that only saves it unchanged, and the drift issue names the ruleset. Read it with `--print` as above to see what changed, the bypass list included.
 
-The check reads settings only an admin can see, so it gets its token from a GitHub App of its own. Each run mints a token that lasts an hour, can only read Administration and Metadata, and is revoked when the job ends. The operator creates the app once:
+The check reads settings only an admin can see, so it gets its token from a GitHub App of its own. Each run mints a token that lasts an hour, can only read Actions, Administration and Metadata, and is revoked when the job ends. The operator creates the app once:
 
-1. Create a GitHub App owned by `hyaloslabs` (Organization settings ▸ Developer settings ▸ GitHub Apps ▸ New GitHub App), for example `hyaloslabs-settings-check`. Turn off the webhook. Repository permissions: **Administration: Read-only** and **Metadata: Read-only**, nothing else. Installable only on this account.
+1. Create a GitHub App owned by `hyaloslabs` (Organization settings ▸ Developer settings ▸ GitHub Apps ▸ New GitHub App), for example `hyaloslabs-settings-check`. Turn off the webhook. Repository permissions: **Actions: Read-only** (GitHub lists environments under it), **Administration: Read-only** and **Metadata: Read-only**, nothing else. Installable only on this account.
 2. Install it on `hyaloslabs/marketplace` alone (Only select repositories).
 3. In the `settings-check` environment (Settings ▸ Environments ▸ settings-check), add the app's client ID as the **variable** `SETTINGS_APP_CLIENT_ID`, and generate a private key and store it as the **secret** `SETTINGS_APP_KEY`. Delete the downloaded key file afterwards. Only `main` may use that environment, and only `settings.yml`'s check job names either.
 4. Run the check once: `gh workflow run settings.yml --repo hyaloslabs/marketplace --ref main`.
