@@ -45,3 +45,23 @@ jobs:
           else
             echo "the base has no skills yet"
           fi
+
+  snapshot:
+    name: the trusted-root snapshot fetches through TUF
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # The same fetch release.yml makes, so a change to the TUF client or the pinned root is tried
+    # before it reaches main. It signs nothing.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The TUF client, by hash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tuf"
+          "$RUNNER_TEMP/tuf/bin/pip" install --quiet --require-hashes --only-binary :all: \
+            -r tools/requirements-snapshot.txt
+      - name: Fetch, verify and wrap
+        run: |
+          "$RUNNER_TEMP/tuf/bin/python" tools/snapshot.py fetch "$RUNNER_TEMP/snapshot"
+          python3 -c 'import sys; sys.path.insert(0, "tools"); import snapshot; r = snapshot.unwrap(open(sys.argv[1]).read()); print(len(r["tlogs"]), "logs,", len(r["certificateAuthorities"]), "authorities")' "$RUNNER_TEMP/snapshot/trusted-root.json"
