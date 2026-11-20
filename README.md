@@ -41,7 +41,7 @@ The check reads through a GitHub App of its own, read-only on Actions, Administr
 
 ## Installing from it
 
-The repository is private, so its release assets need a GitHub login to download, and Hyalos fetches without one. Download a release into a directory and install from there:
+Download a release into a directory and install from there. The repository is public, so no GitHub login is needed:
 
 ```
 gh release download --repo hyaloslabs/marketplace --pattern '*' --dir marketplace

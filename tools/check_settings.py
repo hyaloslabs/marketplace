@@ -202,7 +202,14 @@ def live(repo, token):
         "actions": {
             "permissions": get(f"{r}/actions/permissions", token),
             "workflow": get(f"{r}/actions/permissions/workflow", token),
-            "access": get(f"{r}/actions/permissions/access", token),
+            # GitHub keeps an access level only for a private or internal repository, and refuses
+            # to read one for a public repository. Visibility is compared too, so a switch back
+            # to private is drift and the access level is read again.
+            "access": (
+                None
+                if repository["visibility"] == "public"
+                else get(f"{r}/actions/permissions/access", token)
+            ),
         },
         # An environment's branch rule is what keeps its secret from a pull request's workflow.
         "environments": sorted(
