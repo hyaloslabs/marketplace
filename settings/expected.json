@@ -1,8 +1,6 @@
 {
   "actions": {
-    "access": {
-      "access_level": "none"
-    },
+    "access": null,
     "permissions": {
       "allowed_actions": "all",
       "enabled": true,
@@ -58,9 +56,9 @@
     }
   ],
   "repository": {
-    "allow_forking": false,
+    "allow_forking": true,
     "default_branch": "main",
-    "visibility": "private"
+    "visibility": "public"
   },
   "rulesets": [
     {
