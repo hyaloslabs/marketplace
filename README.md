@@ -24,8 +24,8 @@ Every push to `main` runs `release.yml`:
 
 1. Every skill is built on two runner images (Ubuntu 24.04 and 22.04).
 2. The two builds must be the same bytes, or nothing is signed.
-3. Each archive is signed keylessly with cosign, which logs it in Rekor, and its bundle is checked for the pinned identity and refused for another.
-4. `index.json`, the archives and their bundles are published as release `r<run>`, marked latest. Nothing is published when nothing changed.
+3. Each archive and `index.json` are signed keylessly with cosign, which logs them in Rekor, and each bundle is checked for the pinned identity and refused for another. The signed index binds every version it lists to its archive's digest.
+4. `index.json`, the archives and their bundles are published as release `r<run>`, marked latest. Nothing is published when nothing changed, except that the index is re-signed in a new release at least every 7 days, so Hyalos can tell a frozen index from a current one.
 
 It also runs every day on a schedule, which runs `main`'s own file and so signs as the same identity. Each run fetches Sigstore's trusted root through TUF and signs it as `trusted-root.json`, the snapshot Hyalos verifies releases against (ADR-0007, ADR-0097). A release carries it, and a new release is published when the index changed, the trusted root changed, or the last one is 7 days old, so what the latest release carries is never older than that. A run that fails publishes nothing and opens an issue labelled `release-failed`; the last release stays current.
 
