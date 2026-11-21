@@ -8,7 +8,12 @@ stays installable from the release that built it (its tag's download location).
 With --previous <index.json>, the index of the release before this one, a skill whose version is
 unchanged but whose digest is not is refused: a changed skill needs a new version.
 
+The index is written before the sign job, which signs it as the pipeline so that every version and
+digest it lists is signed (hyaloslabs/hyalos#378). `signed` then checks, before publishing, that the
+index and every archive it lists have their bundles.
+
     index.py <dist> [--previous <index.json>]
+    index.py signed <dist>
 """
 
 import json
@@ -44,9 +49,24 @@ def changed_without_a_version(entries, previous):
     return out
 
 
+def unsigned(dist):
+    """The bundles the index at `dist` needs and does not have, its own first."""
+    with open(os.path.join(dist, "index.json")) as f:
+        index = json.load(f)
+    wanted = ["index.json.sigstore.json"] + [
+        entry["bundle"] for versions in index["plugins"].values() for entry in versions
+    ]
+    return [b for b in wanted if not os.path.isfile(os.path.join(dist, b))]
+
+
 def main(argv):
+    if len(argv) == 3 and argv[1] == "signed":
+        missing = unsigned(argv[2])
+        for bundle in missing:
+            print(f"index: {bundle} is missing: the index and every archive are signed", file=sys.stderr)
+        return 1 if missing else 0
     if len(argv) not in (2, 4) or (len(argv) == 4 and argv[2] != "--previous"):
-        print("usage: index.py <dist> [--previous <index.json>]", file=sys.stderr)
+        print("usage: index.py <dist> [--previous <index.json>] | index.py signed <dist>", file=sys.stderr)
         return 2
     entries = digests(argv[1])
     if len(argv) == 4:
@@ -58,10 +78,6 @@ def main(argv):
                 f"index: {', '.join(stale)} changed but kept its version; give it a new one in versions.json",
                 file=sys.stderr,
             )
-            return 1
-    for entry in entries.values():
-        if not os.path.isfile(os.path.join(argv[1], entry["bundle"])):
-            print(f"index: {entry['bundle']} is missing: every archive is signed", file=sys.stderr)
             return 1
     index = {"version": 1, "plugins": {n: [e] for n, e in sorted(entries.items())}}
     with open(os.path.join(argv[1], "index.json"), "x") as f:
